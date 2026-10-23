@@ -34,7 +34,12 @@ async function bootstrap() {
   }));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.enableCors({
-    origin: configService.getOrThrow<string>('STOREFRONT_ORIGIN'),
+    origin: [
+      configService.getOrThrow<string>('STOREFRONT_ORIGIN'),
+      ...(configService.get<boolean>('LOCAL_DEMO_MODE')
+        ? ['http://localhost:3201', 'http://localhost:3202']
+        : []),
+    ],
     credentials: true,
   });
 
@@ -43,6 +48,7 @@ async function bootstrap() {
     .setDescription('Public API for the Shopademia marketplace.')
     .setVersion('1.0.0')
     .addServer('http://localhost:' + port)
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

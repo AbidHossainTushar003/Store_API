@@ -19,6 +19,9 @@ describe('Demo commerce API (mocked PostgreSQL pool)', () => {
         return { rows: [{ id: 'session-id' }], rowCount: 1 };
       }
       if (sql.includes('FROM products') && sql.includes('ORDER BY id')) {
+        if (sql.includes('is_public_approved = true')) {
+          return { rows: [], rowCount: 0 };
+        }
         return {
           rows: [{
             id: 'sample-notebook',
@@ -26,6 +29,9 @@ describe('Demo commerce API (mocked PostgreSQL pool)', () => {
             description: 'An example.',
             category: 'Books & stationery',
             brand: 'Northstar Studio',
+            is_demo: true,
+            price_bdt: null,
+            stock_quantity: 0,
           }],
           rowCount: 1,
         };
@@ -42,6 +48,8 @@ describe('Demo commerce API (mocked PostgreSQL pool)', () => {
             category: 'Books & stationery',
             brand: 'Northstar Studio',
             quantity: 1,
+            isDemo: true,
+            priceBdt: null,
           }],
           rowCount: 1,
         };
@@ -79,15 +87,12 @@ describe('Demo commerce API (mocked PostgreSQL pool)', () => {
     await app.close();
   });
 
-  it('lists only explicitly demo products', async () => {
+  it('excludes demo products from the public catalogue', async () => {
     await request(app.getHttpServer())
       .get('/api/v1/products')
       .expect(HttpStatus.OK)
       .expect(({ body }) => {
-        expect(body.products[0]).toEqual(expect.objectContaining({
-          id: 'sample-notebook',
-          isDemo: true,
-        }));
+        expect(body.products).toEqual([]);
       });
   });
 

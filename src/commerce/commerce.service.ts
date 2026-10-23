@@ -9,6 +9,8 @@ type CartProduct = {
   category: string;
   brand: string | null;
   quantity: number;
+  isDemo: boolean;
+  priceBdt: number | null;
 };
 
 type WishlistProduct = Omit<CartProduct, 'quantity'>;
@@ -19,10 +21,16 @@ export class CommerceService {
 
   async getCart(sessionId: string): Promise<{ items: CartProduct[]; totalQuantity: number }> {
     const result = await this.pool.query<CartProduct>(
-      `SELECT p.id, p.title, p.description, p.category, p.brand, ci.quantity
+      `SELECT p.id, p.title, p.description, p.category, p.brand, ci.quantity,
+              p.is_demo AS "isDemo", p.price_bdt AS "priceBdt"
        FROM cart_items ci
        JOIN products p ON p.id = ci.product_id
-       WHERE ci.guest_session_id = $1 AND p.is_demo = true
+       WHERE ci.guest_session_id = $1
+         AND (p.is_demo = true OR (p.is_public_approved = true AND p.status = 'active'))
+         AND (p.is_demo = true OR EXISTS (
+           SELECT 1 FROM seller_applications sa
+           WHERE sa.applicant_sub = p.seller_id AND sa.status = 'approved'
+         ))
        ORDER BY ci.created_at`,
       [sessionId],
     );
@@ -38,7 +46,13 @@ export class CommerceService {
       `INSERT INTO cart_items (guest_session_id, product_id, quantity)
        SELECT $1, p.id, $3
        FROM products p
-       WHERE p.id = $2 AND p.is_demo = true
+       WHERE p.id = $2 AND (p.is_demo = true OR (
+         p.is_public_approved = true AND p.status = 'active' AND p.stock_quantity > 0
+         AND EXISTS (
+           SELECT 1 FROM seller_applications sa
+           WHERE sa.applicant_sub = p.seller_id AND sa.status = 'approved'
+         )
+       ))
        ON CONFLICT (guest_session_id, product_id)
        DO UPDATE SET
          quantity = LEAST(cart_items.quantity + EXCLUDED.quantity, 99),
@@ -62,10 +76,16 @@ export class CommerceService {
 
   async getWishlist(sessionId: string): Promise<{ items: WishlistProduct[] }> {
     const result = await this.pool.query<WishlistProduct>(
-      `SELECT p.id, p.title, p.description, p.category, p.brand
+      `SELECT p.id, p.title, p.description, p.category, p.brand,
+              p.is_demo AS "isDemo", p.price_bdt AS "priceBdt"
        FROM wishlist_items wi
        JOIN products p ON p.id = wi.product_id
-       WHERE wi.guest_session_id = $1 AND p.is_demo = true
+       WHERE wi.guest_session_id = $1
+         AND (p.is_demo = true OR (p.is_public_approved = true AND p.status = 'active'))
+         AND (p.is_demo = true OR EXISTS (
+           SELECT 1 FROM seller_applications sa
+           WHERE sa.applicant_sub = p.seller_id AND sa.status = 'approved'
+         ))
        ORDER BY wi.created_at`,
       [sessionId],
     );
@@ -77,7 +97,13 @@ export class CommerceService {
       `INSERT INTO wishlist_items (guest_session_id, product_id)
        SELECT $1, p.id
        FROM products p
-       WHERE p.id = $2 AND p.is_demo = true
+       WHERE p.id = $2 AND (p.is_demo = true OR (
+         p.is_public_approved = true AND p.status = 'active' AND p.stock_quantity > 0
+         AND EXISTS (
+           SELECT 1 FROM seller_applications sa
+           WHERE sa.applicant_sub = p.seller_id AND sa.status = 'approved'
+         )
+       ))
        ON CONFLICT (guest_session_id, product_id) DO NOTHING
        RETURNING product_id`,
       [sessionId, productId],
@@ -85,7 +111,14 @@ export class CommerceService {
 
     if (!result.rows[0]) {
       const exists = await this.pool.query(
-        'SELECT 1 FROM products WHERE id = $1 AND is_demo = true',
+        `SELECT 1 FROM products
+        WHERE id = $1 AND (is_demo = true OR (
+          is_public_approved = true AND status = 'active' AND stock_quantity > 0
+          AND EXISTS (
+            SELECT 1 FROM seller_applications sa
+            WHERE sa.applicant_sub = products.seller_id AND sa.status = 'approved'
+          )
+        ))`,
         [productId],
       );
       if (!exists.rowCount) {

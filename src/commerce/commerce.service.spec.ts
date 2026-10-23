@@ -33,6 +33,8 @@ describe('CommerceService', () => {
       quantity: 2,
     });
     expect(query.mock.calls[0][0]).toContain('LEAST(cart_items.quantity + EXCLUDED.quantity, 99)');
+    expect(query.mock.calls[0][0]).toContain('p.is_public_approved = true');
+    expect(query.mock.calls[0][0]).toContain("sa.status = 'approved'");
   });
 
   it('passes an intentional quantity increase to the cart query', async () => {
@@ -81,6 +83,15 @@ describe('CommerceService', () => {
 
     await expect(service.addWishlistItem('session', 'a')).resolves.toEqual({ productId: 'a' });
     expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires public approval and an eligible seller for non-demo wishlist products', async () => {
+    query.mockResolvedValue({ rows: [{ product_id: 'a' }] });
+
+    await service.addWishlistItem('session', 'a');
+
+    expect(query.mock.calls[0][0]).toContain('p.is_public_approved = true');
+    expect(query.mock.calls[0][0]).toContain("sa.status = 'approved'");
   });
 
   it('rejects unknown wishlist products', async () => {

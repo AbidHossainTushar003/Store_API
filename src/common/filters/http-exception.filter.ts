@@ -7,6 +7,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import {
+  getRequestId,
+  getSafeErrorDiagnostics,
+  wasRequestDiagnosticLogged,
+} from '../diagnostics/safe-error-diagnostics';
 
 interface ErrorResponsePayload {
   success: false;
@@ -15,13 +20,19 @@ interface ErrorResponsePayload {
   message: string | string[];
   path: string;
   timestamp: string;
+  requestId?: string;
+}
+
+function getSafeRoutePath(request: Request): string {
+  const routePath = request.route?.path;
+  return typeof routePath === 'string' ? routePath : 'unmatched';
 }
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
-  catch(exception: HttpException, host: ArgumentsHost) {
+  catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
@@ -56,17 +67,25 @@ export class HttpExceptionFilter implements ExceptionFilter {
       statusCode: status,
       error: errorName,
       message,
-      path: request.originalUrl || request.url,
+      path: getSafeRoutePath(request),
       timestamp: new Date().toISOString(),
     };
 
-    const safeRequestPath = request.path || '/';
-    const logMessage = `${request.method} ${safeRequestPath} -> ${status}`;
     if (isHttpException) {
-      this.logger.warn(logMessage);
+      if (!wasRequestDiagnosticLogged(request)) {
+        this.logger.warn(`${request.method} ${body.path} -> ${status}`);
+      }
     } else {
-      this.logger.error('Unexpected request failure.');
-      this.logger.warn(logMessage);
+      const diagnostics = getSafeErrorDiagnostics(exception, getRequestId(request));
+      const { requestId } = diagnostics;
+      body.requestId = requestId;
+      response.setHeader('X-Request-ID', requestId);
+      this.logger.error([
+        `${request.method} ${body.path} -> ${status}`,
+        `requestId=${requestId}`,
+        `errorClass=${diagnostics.errorClass}`,
+        ...(diagnostics.sqlState ? [`sqlState=${diagnostics.sqlState}`] : []),
+      ].join(' '));
     }
     response.status(status).json(body);
   }
